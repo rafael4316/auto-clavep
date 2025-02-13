@@ -1,4 +1,5 @@
 streamlit
+sqlalchemy
 pandas
 matplotlib
-numpy
+sqlite3
