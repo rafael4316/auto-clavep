@@ -1,9 +1,4 @@
-dash
-dash-core-components
-dash-html-components
-pandas
-numpy
-sqlalchemy
-pyqt6
-plotly
 streamlit
+pandas
+matplotlib
+numpy
