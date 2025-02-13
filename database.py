@@ -9,12 +9,12 @@ Base = declarative_base()
 SessionLocal = sessionmaker(bind=engine)
 session = SessionLocal()
 
-# Modelo de Usuarios
+# Modelo de Usuarios con contraseña cifrada
 class Usuario(Base):
     __tablename__ = "usuarios"
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, nullable=False)
-    password = Column(String, nullable=False)  # Almacenar contraseñas cifradas en producción
+    password = Column(String, nullable=False)  # Almacenará la contraseña cifrada
 
 # Modelo de Archivos Subidos
 class ArchivoSubido(Base):
