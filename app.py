@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from sqlalchemy.orm import sessionmaker
 from database import engine, Usuario, ArchivoSubido  # Importar modelos de la BD
 import datetime
+from werkzeug.security import check_password_hash  # Importar para comparar contraseñas
 
 # Crear sesión con la base de datos
 SessionLocal = sessionmaker(bind=engine)
@@ -12,12 +13,14 @@ session = SessionLocal()
 # Configurar sesión de usuario
 if "usuario_autenticado" not in st.session_state:
     st.session_state.usuario_autenticado = None
-
+    
 # Función para verificar credenciales
 def autenticar(usuario, password):
-    usuario_db = session.query(Usuario).filter_by(username=usuario, password=password).first()
-    return usuario_db is not None
-
+    usuario_db = session.query(Usuario).filter_by(username=usuario).first()
+    if usuario_db and check_password_hash(usuario_db.password, password):
+        return True
+    return False
+    
 # Interfaz de login
 if st.session_state.usuario_autenticado is None:
     st.title("🔒 Iniciar Sesión")
