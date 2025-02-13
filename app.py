@@ -1,77 +1,76 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-from database import session, RegistroAutoclave, Usuario
-import datetime
+import os
+from database import session, Usuario
+from werkzeug.security import check_password_hash
+from sqlalchemy.orm.exc import NoResultFound
 
 # Configuración de la página
 st.set_page_config(page_title="Autoclaves Dashboard", layout="wide")
 
-# ---- Autenticación de Usuarios ----
+# ---- Función para la autenticación ----
 def autenticar_usuario(username, password):
-    usuario = session.query(Usuario).filter_by(username=username, password=password).first()
-    return usuario is not None
-
-if "usuario" not in st.session_state:
-    with st.form("login_form"):
-        st.subheader("🔐 Iniciar Sesión")
-        username = st.text_input("Usuario")
-        password = st.text_input("Contraseña", type="password")
-        submit = st.form_submit_button("Iniciar Sesión")
-
-        if submit:
-            if autenticar_usuario(username, password):
-                st.session_state.usuario = username
-                st.experimental_rerun()
-            else:
-                st.error("⚠️ Usuario o contraseña incorrectos.")
-
-if "usuario" in st.session_state:
-    st.sidebar.success(f"Bienvenido, {st.session_state.usuario}")
-
-    # ---- Menú lateral ----
-    menu = st.sidebar.radio("Menú", ["📂 Subir Datos", "📊 Historial de Registros"])
-
-    # ---- Subir archivos CSV ----
-    if menu == "📂 Subir Datos":
-        st.title("📂 Cargar Archivo CSV")
-        archivos_subidos = st.file_uploader("Selecciona archivos CSV", accept_multiple_files=True, type=["csv"])
-
-        if archivos_subidos:
-            for archivo in archivos_subidos:
-                df = pd.read_csv(archivo, delimiter=';', skipinitialspace=True)
-                df.columns = ["Fecha", "Hora", "Autoclave"]
-                df["Tiempo"] = pd.to_datetime(df["Fecha"] + " " + df["Hora"], dayfirst=True)
-                df = df.sort_values("Tiempo")
-
-                # Guardar en base de datos
-                nuevo_registro = RegistroAutoclave(nombre_archivo=archivo.name, autoclave=df["Autoclave"].iloc[0])
-                session.add(nuevo_registro)
-                session.commit()
-
-                # Graficar
-                fig, ax = plt.subplots(figsize=(10, 5))
-                ax.plot(df["Tiempo"], df["Autoclave"], linestyle='-', linewidth=1.5, color='black')
-                ax.set_xlabel("Tiempo")
-                ax.set_ylabel("Temperatura / Presión")
-                ax.set_title(f"Autoclave {df['Autoclave'].iloc[0]}")
-                ax.grid(True, linestyle="--", linewidth=0.5)
-                st.pyplot(fig)
-
-    # ---- Historial de Registros ----
-    elif menu == "📊 Historial de Registros":
-        st.title("📊 Historial de Datos Cargados")
-        
-        registros = session.query(RegistroAutoclave).all()
-        
-        if registros:
-            for registro in registros:
-                st.subheader(f"📌 {registro.nombre_archivo} - Autoclave {registro.autoclave}")
-                st.write(f"📅 Fecha: {registro.fecha_subida}")
+    try:
+        usuario = session.query(Usuario).filter_by(username=username).one()
+        if check_password_hash(usuario.password, password):
+            return True
         else:
-            st.info("⚠️ No hay registros almacenados aún.")
+            return False
+    except NoResultFound:
+        return False
 
-    # ---- Cerrar sesión ----
-    if st.sidebar.button("Cerrar Sesión"):
-        del st.session_state.usuario
-        st.experimental_rerun()
+# ---- Página de Login ----
+if "usuario" not in st.session_state:
+    st.session_state.usuario = None
+
+if st.session_state.usuario is None:
+    st.title("🔒 Iniciar Sesión")
+
+    username = st.text_input("Usuario", key="username")
+    password = st.text_input("Contraseña", type="password", key="password")
+    login_btn = st.button("Iniciar sesión")
+
+    if login_btn:
+        if autenticar_usuario(username, password):
+            st.session_state.usuario = username
+            st.success("✅ Inicio de sesión exitoso")
+            st.rerun()  # <--- Corrección: antes era st.experimental_rerun()
+        else:
+            st.error("⚠️ Usuario o contraseña incorrectos.")
+    
+    st.stop()
+
+# ---- Interfaz después del login ----
+st.sidebar.title(f"👤 Usuario: {st.session_state.usuario}")
+st.sidebar.button("Cerrar sesión", on_click=lambda: st.session_state.update({"usuario": None, "archivos": []}), key="logout")
+st.title("📊 Dashboard de Autoclaves")
+
+# ---- Subir archivos CSV ----
+st.sidebar.subheader("📂 Cargar archivos CSV")
+archivos_subidos = st.sidebar.file_uploader("Selecciona uno o varios archivos CSV", accept_multiple_files=True, type=["csv"])
+
+if "archivos" not in st.session_state:
+    st.session_state.archivos = []
+
+if archivos_subidos:
+    for archivo in archivos_subidos:
+        st.session_state.archivos.append(archivo)
+
+# ---- Mostrar los datos cargados ----
+if st.session_state.archivos:
+    for archivo in st.session_state.archivos:
+        try:
+            df = pd.read_csv(archivo, delimiter=';', skipinitialspace=True)
+            df.columns = ["Fecha", "Hora", "Autoclave"]
+            df["Tiempo"] = pd.to_datetime(df["Fecha"] + " " + df["Hora"], dayfirst=True)
+            df = df.sort_values("Tiempo")
+
+            st.subheader(f"📌 Datos del archivo: {archivo.name}")
+            st.line_chart(df.set_index("Tiempo")["Autoclave"])
+
+        except Exception as e:
+            st.error(f"⚠️ Error al procesar {archivo.name}: {e}")
+
+else:
+    st.info("📎 No se han subido archivos aún.")
+
