@@ -1,71 +1,83 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-from io import BytesIO
+from sqlalchemy.orm import sessionmaker
+from database import engine, Usuario, ArchivoSubido  # Importar modelos de la BD
+import datetime
 
-# Configuración de la página
-st.set_page_config(page_title="Visualizador de Autoclave", layout="wide")
+# Crear sesión con la base de datos
+SessionLocal = sessionmaker(bind=engine)
+session = SessionLocal()
 
-# Estilos personalizados
-st.markdown("""
-    <style>
-    .css-18e3th9 {
-        padding-top: 2rem;
-    }
-    .css-1d391kg {
-        padding-top: 1rem;
-    }
-    .stApp {
-        background-color: #f7f9fc;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+# Configurar sesión de usuario
+if "usuario_autenticado" not in st.session_state:
+    st.session_state.usuario_autenticado = None
 
-# Título principal
-st.title("📊 Visualizador de Datos de Autoclave")
+# Función para verificar credenciales
+def autenticar(usuario, password):
+    usuario_db = session.query(Usuario).filter_by(username=usuario, password=password).first()
+    return usuario_db is not None
 
-# Sección de carga de archivos
-st.sidebar.header("📂 Cargar Archivos CSV")
-archivos = st.sidebar.file_uploader("Selecciona uno o varios archivos CSV", type=["csv"], accept_multiple_files=True)
+# Interfaz de login
+if st.session_state.usuario_autenticado is None:
+    st.title("🔒 Iniciar Sesión")
+    usuario = st.text_input("Usuario")
+    password = st.text_input("Contraseña", type="password")
 
-# Validar que se haya cargado al menos un archivo
-if archivos:
-    st.sidebar.subheader("📋 Archivos cargados")
-    nombres_archivos = [archivo.name for archivo in archivos]
-    archivo_seleccionado = st.sidebar.selectbox("Selecciona un archivo para visualizar", nombres_archivos)
+    if st.button("Ingresar"):
+        if autenticar(usuario, password):
+            st.session_state.usuario_autenticado = usuario
+            st.success(f"Bienvenido, {usuario} 🎉")
+            st.experimental_rerun()
+        else:
+            st.error("❌ Usuario o contraseña incorrectos")
 
-    # Obtener el archivo seleccionado
-    archivo_actual = next(archivo for archivo in archivos if archivo.name == archivo_seleccionado)
+# Si el usuario está autenticado, mostrar la app
+if st.session_state.usuario_autenticado:
+    st.title("📊 Visualizador de Autoclaves")
 
-    try:
-        # Leer el archivo seleccionado
-        df = pd.read_csv(archivo_actual, delimiter=';', skipinitialspace=True)
-        df.columns = ["Fecha", "Hora", "Autoclave_02"]
-        df["Tiempo"] = pd.to_datetime(df["Fecha"] + " " + df["Hora"], dayfirst=True)
-        df = df.sort_values("Tiempo")
+    # Subir múltiples archivos CSV
+    archivos = st.file_uploader("📂 Cargar archivos CSV", accept_multiple_files=True, type=["csv"])
 
-        # Mostrar dataframe
-        with st.expander("📋 Vista previa de los datos", expanded=False):
-            st.dataframe(df)
-
-        # Graficar datos
-        st.subheader("📈 Gráfico de Autoclave")
+    if archivos:
         fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(df["Tiempo"], df["Autoclave_02"], linestyle='-', linewidth=1.5, color='black')
+        
+        for archivo in archivos:
+            df = pd.read_csv(archivo, delimiter=';', skipinitialspace=True)
+            df.columns = ["Fecha", "Hora", "Autoclave_02"]
+            df["Tiempo"] = pd.to_datetime(df["Fecha"] + " " + df["Hora"], dayfirst=True)
+            df = df.sort_values("Tiempo")
+
+            ax.plot(df["Tiempo"], df["Autoclave_02"], linestyle='-', linewidth=1.5, label=archivo.name)
+
+            # Guardar en la base de datos
+            nuevo_archivo = ArchivoSubido(
+                usuario=st.session_state.usuario_autenticado,
+                archivo_nombre=archivo.name,
+                fecha_subida=datetime.datetime.utcnow()
+            )
+            session.add(nuevo_archivo)
+            session.commit()
+
         ax.set_xlabel("Tiempo")
         ax.set_ylabel("Temperatura / Presión")
-        ax.set_title(f"Autoclave Nº1 - {archivo_seleccionado}")
+        ax.set_title("Datos de Autoclaves")
+        ax.legend()
         ax.grid(True, linestyle="--", linewidth=0.5)
+        
         st.pyplot(fig)
 
-        # Guardar gráfico en PDF
-        buffer = BytesIO()
-        fig.savefig(buffer, format="pdf")
-        buffer.seek(0)
-        st.sidebar.download_button(label="📄 Descargar Gráfico en PDF", data=buffer, file_name=f"grafico_{archivo_seleccionado}.pdf", mime="application/pdf")
+    # Mostrar el historial de archivos cargados
+    st.subheader("📌 Archivos Subidos")
+    archivos_subidos = session.query(ArchivoSubido).filter_by(usuario=st.session_state.usuario_autenticado).all()
 
-    except Exception as e:
-        st.error(f"⚠️ Error al procesar el archivo: {e}")
+    if archivos_subidos:
+        for archivo in archivos_subidos:
+            st.write(f"📄 {archivo.archivo_nombre} - {archivo.fecha_subida.strftime('%Y-%m-%d %H:%M:%S')}")
+    else:
+        st.write("No hay archivos subidos.")
 
-else:
-    st.warning("🔹 Carga uno o más archivos CSV desde la barra lateral para comenzar.")
+    # Botón de cerrar sesión
+    if st.button("🔓 Cerrar sesión"):
+        st.session_state.usuario_autenticado = None
+        st.experimental_rerun()
